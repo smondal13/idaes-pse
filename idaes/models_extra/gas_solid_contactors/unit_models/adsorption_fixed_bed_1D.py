@@ -322,14 +322,15 @@ dyameter.}""",
                 [
                     "None",
                     "Stampi-Bombelli",
-                    "reparam Stampi-Bombelli" "Mechanistic",
+                    "reparam Stampi-Bombelli",
+                    "Mechanistic",
                     "WADST",
                 ]
             ),
             description="isoterm form for CO2 and H2O co-adsorption",
             doc="""Construction flag to specify the isotherm formula for co-adsorption.
         Default: None, indicating water has no effect on CO2 uptake.
-        Valid values: "None", "Stampi-Bombelli", "Mechanistic" "WADST".""",
+        Valid values: "None", "Stampi-Bombelli", "reparam Stampi-Bombelli", "Mechanistic", "WADST".""",
         ),
     )
 
@@ -661,21 +662,18 @@ and used when constructing these
                 doc="E for Arrhenius LDF coefficient",
             )
             self.E_LDF.fix()
-        elif self.config.MTC_type == "reparam_Arrhenius":
+        elif self.config.mass_transfer_coefficient_type == "reparam_Arrhenius":
             self.a_LDF = Var(
                 self.adsorbed_components,
-                initialize={"CO2": -5, "H2O": -3.50656},
+                initialize=0,
                 units=pyunits.dimensionless,  # for k = 1/s
                 bounds=(None, None),
-                doc="ln(k0) for reparam_Arrhenius LDF coefficient",
+                doc="a_LDF for reparam_Arrhenius LDF coefficient",
             )
             self.a_LDF.fix()
             self.E_E0 = Var(
                 self.adsorbed_components,
-                initialize={
-                    "CO2": 1.4,
-                    "H2O": 0,
-                },  # 38.87 kJ/mol from Low paper, fixing H2O at 0 for a constant MTC
+                initialize=0.75,
                 units=pyunits.J / pyunits.mol,  # for k = 1/s
                 bounds=(0, 100),
                 doc="E/E0 for reparam_Arrhenius LDF coefficient",
@@ -803,10 +801,10 @@ and used when constructing these
             self.E_LDF["CO2"] = 38870
             self.E_LDF["H2O"] = 0
         elif self.config.mass_transfer_coefficient_type == "reparam_Arrhenius":
-            self.a_LDF["CO2"] = -6.1
-            self.a_LDF["H2O"] = -3.50656
-            self.E_E0["CO2"] = 1.41
-            self.E_E0["H2O"] = 0
+            self.a_LDF["CO2"] = -6.05
+            self.a_LDF["H2O"] = -4.1
+            self.E_E0["CO2"] = 0.75
+            self.E_E0["H2O"] = 1e-8
 
         # add isotherm parameters ================================
         self.temperature_ref = Param(
@@ -970,15 +968,15 @@ and used when constructing these
             )
             self.SB_gamma_rep = Var(
                 initialize=-0.137 / self.SB_gamma_ref,
-                units=pyunits.kg / pyunits.mol,
-                bounds=(-1, 0.2),
+                units=None,
+                bounds=(-200, 200),
                 doc="reparameterized Stampi-Bomblli model parameter gamma [kg/mol]",
             )
             self.SB_gamma_rep.fix()
             self.SB_beta_rep = Var(
                 initialize=5.612 / self.SB_beta_ref,
-                units=pyunits.kg / pyunits.mol,
-                bounds=(-0.1, 25),
+                units=None,
+                bounds=(-200, 200),
                 doc="reparameterized Stampi-Bomblli model parameter beta [kg/mol]",
             )
             self.SB_beta_rep.fix()
@@ -1258,6 +1256,13 @@ and used when constructing these
                             + exp(-self.WADST_A / q_h2o) * q_wet
                         )
                     elif self.config.coadsorption_isotherm == "Stampi-Bombelli":
+                        return (
+                            1
+                            * b.adsorbate_loading_equil[t, x, j]
+                            / exp(b.ln_qtoth[t, x])
+                            == 1
+                        )
+                    elif self.config.coadsorption_isotherm == "reparam Stampi-Bombelli":
                         return (
                             1
                             * b.adsorbate_loading_equil[t, x, j]
@@ -1752,16 +1757,16 @@ and used when constructing these
                 T_min = 25 + 273.15  # K
 
                 E0 = constants.gas_constant * (T_max * T_min) / (T_max - T_min)  # J/mol
-                X0 = E0 / (
-                    constants.gas_constant * (T_max + T_min) / 2
-                )  # dimesnsionless
-                if self.config.has_microwave_heating:
-                    T = b.solid_temperature_active[t, x]
-                else:
-                    T = b.solid_temperature[t, x]
-                return b.kf[t, x, j] == exp(
-                    b.a_LDF[j] - b.E_E0[j] * (E0 / T / constants.gas_constant - X0)
-                )
+                X0 = E0 / (2 * constants.gas_constant) * (1 / T_max + 1 / T_min)
+                # dimesnsionless
+                T = b.solid_temperature[t, x]
+                X = E0 / constants.gas_constant / T
+                # if self.config.has_microwave_heating:
+                #     T = b.solid_temperature_active[t, x]
+                # else:
+                #     T = b.solid_temperature[t, x]
+
+                return b.kf[t, x, j] == exp(b.a_LDF[j] - b.E_E0[j] * (X - X0))
 
         else:
             raise BurntToast(
