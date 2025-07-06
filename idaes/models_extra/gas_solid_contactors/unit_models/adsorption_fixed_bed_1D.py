@@ -333,6 +333,17 @@ dyameter.}""",
         Valid values: "None", "Stampi-Bombelli", "reparam Stampi-Bombelli", "Mechanistic", "WADST".""",
         ),
     )
+    CONFIG.declare(
+        "n_rep_SB_param",
+        ConfigValue(
+            default=1,
+            domain=In([1, 2]),
+            description="Number of parameters for reparameterized Stampi-Bombelli isotherm",
+            doc="""Number of parameters for Stampi-Bombelli isotherm.
+            Default: 1.
+            Valid values: 1, 2.""",
+        ),
+    )
 
     CONFIG.declare(
         "mass_transfer_coefficient_type",
@@ -956,30 +967,44 @@ and used when constructing these
             self.SB_beta.fix()
 
         elif self.config.coadsorption_isotherm == "reparam Stampi-Bombelli":
-            self.SB_gamma_ref = Param(
-                initialize=0.005,
-                units=pyunits.kg / pyunits.mol,
-                doc="Reference value for Stampi-Bombelli model parameter gamma [kg/mol]",
-            )
-            self.SB_beta_ref = Param(
-                initialize=0.04,
-                units=pyunits.kg / pyunits.mol,
-                doc="Reference value for Stampi-Bombelli model parameter beta [kg/mol]",
-            )
-            self.SB_gamma_rep = Var(
-                initialize=-0.137 / self.SB_gamma_ref,
-                units=None,
-                bounds=(-200, 200),
-                doc="reparameterized Stampi-Bomblli model parameter gamma [kg/mol]",
-            )
-            self.SB_gamma_rep.fix()
-            self.SB_beta_rep = Var(
-                initialize=5.612 / self.SB_beta_ref,
-                units=None,
-                bounds=(-200, 200),
-                doc="reparameterized Stampi-Bomblli model parameter beta [kg/mol]",
-            )
-            self.SB_beta_rep.fix()
+            if self.config.n_rep_SB_param == 2:
+                self.SB_gamma_ref = Param(
+                    initialize=1,
+                    units=pyunits.kg / pyunits.mol,
+                    doc="Reference value for Stampi-Bombelli model parameter gamma [kg/mol]",
+                )
+                self.SB_beta_ref = Param(
+                    initialize=1,
+                    units=pyunits.kg / pyunits.mol,
+                    doc="Reference value for Stampi-Bombelli model parameter beta [kg/mol]",
+                )
+                self.SB_gamma_rep = Var(
+                    initialize=-0.137 / self.SB_gamma_ref,
+                    units=None,
+                    bounds=(-200, 200),
+                    doc="reparameterized Stampi-Bomblli model parameter gamma [kg/mol]",
+                )
+                self.SB_gamma_rep.fix()
+                self.SB_beta_rep = Var(
+                    initialize=5.612 / self.SB_beta_ref,
+                    units=None,
+                    bounds=(-200, 200),
+                    doc="reparameterized Stampi-Bomblli model parameter beta [kg/mol]",
+                )
+                self.SB_beta_rep.fix()
+            else:
+                self.SB_B1 = Param(
+                    initialize=-0.533,
+                    units=None,
+                    doc="Coefficient that relates theta with beta B1 [-]",
+                )
+                self.SB_theta = Var(
+                    initialize=-0.137,
+                    units=None,
+                    bounds=(-200, 200),
+                    doc="reparameterized Stampi-Bomblli model parameter theta [-]",
+                )
+                self.SB_theta.fix()
 
         # isotherm equations ============================================
         if self.config.coadsorption_isotherm == "Mechanistic":
@@ -1135,13 +1160,19 @@ and used when constructing these
             def ln_q_inf(b, t, x):
                 T = b.solid_temperature[t, x]
                 ln_q_inf_dry = log(b.q0_inf) + b.X * (1 - b.temperature_ref / T)
-                a = smooth_max(
-                    1e-10,
-                    1
-                    - b.SB_gamma_rep
-                    * self.SB_gamma_ref
-                    * b.adsorbate_loading_equil[t, x, "H2O"],
-                )
+                if self.config.n_rep_SB_param == 2:
+                    a = smooth_max(
+                        1e-10,
+                        1
+                        - b.SB_gamma_rep
+                        * self.SB_gamma_ref
+                        * b.adsorbate_loading_equil[t, x, "H2O"],
+                    )
+                else:
+                    a = smooth_max(
+                        1e-10,
+                        1 - b.SB_theta * b.adsorbate_loading_equil[t, x, "H2O"],
+                    )
                 return ln_q_inf_dry - log(a)
 
             @self.Expression(
@@ -1171,13 +1202,20 @@ and used when constructing these
             def ln_b_p(b, t, x):
                 T = b.solid_temperature[t, x]
                 ln_b_dry = log(b.b0) + (-b.hoa / constants.gas_constant / T)
-                a = smooth_max(
-                    1e-10,
-                    1
-                    + b.SB_beta_rep
-                    * self.SB_beta_ref
-                    * b.adsorbate_loading_equil[t, x, "H2O"],
-                )
+                if self.config.n_rep_SB_param == 1:
+                    a = smooth_max(
+                        1e-10,
+                        1
+                        + b.SB_B1 * b.SB_theta * b.adsorbate_loading_equil[t, x, "H2O"],
+                    )
+                else:
+                    a = smooth_max(
+                        1e-10,
+                        1
+                        + b.SB_beta_ref
+                        * b.SB_beta_rep
+                        * b.adsorbate_loading_equil[t, x, "H2O"],
+                    )
                 pres_smooth_max = smooth_max(1e-10, b.pres[t, x, "CO2"], eps=1e-8)
                 return ln_b_dry + log(a) + log(pres_smooth_max)
 
