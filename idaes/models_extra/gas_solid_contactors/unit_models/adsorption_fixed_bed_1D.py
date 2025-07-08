@@ -65,6 +65,7 @@ from pyomo.environ import (
     log,
     sqrt,
     units as pyunits,
+    Expression,
 )
 from pyomo.common.config import ConfigValue, In, Bool
 from pyomo.util.calc_var_value import calculate_variable_from_constraint
@@ -968,43 +969,82 @@ and used when constructing these
 
         elif self.config.coadsorption_isotherm == "reparam Stampi-Bombelli":
             if self.config.n_rep_SB_param == 2:
-                self.SB_gamma_ref = Param(
-                    initialize=1,
-                    units=pyunits.kg / pyunits.mol,
-                    doc="Reference value for Stampi-Bombelli model parameter gamma [kg/mol]",
-                )
-                self.SB_beta_ref = Param(
-                    initialize=1,
-                    units=pyunits.kg / pyunits.mol,
-                    doc="Reference value for Stampi-Bombelli model parameter beta [kg/mol]",
-                )
-                self.SB_gamma_rep = Var(
-                    initialize=-0.137 / self.SB_gamma_ref,
+                self.SB_theta_rep = Var(
+                    initialize=0.055680,
                     units=None,
                     bounds=(-200, 200),
-                    doc="reparameterized Stampi-Bomblli model parameter gamma [kg/mol]",
+                    doc="reparameterized Stampi-Bombelli model parameter theta [kg/mol]",
                 )
-                self.SB_gamma_rep.fix()
-                self.SB_beta_rep = Var(
-                    initialize=5.612 / self.SB_beta_ref,
-                    units=None,
+                self.SB_theta_rep.fix()
+                self.SB_phi_rep = Var(
+                    initialize=-0.137,
+                    units=pyunits.kg / pyunits.mol,
                     bounds=(-200, 200),
-                    doc="reparameterized Stampi-Bomblli model parameter beta [kg/mol]",
+                    doc="reparameterized Stampi-Bombelli model parameter phi [kg/mol]",
                 )
-                self.SB_beta_rep.fix()
+                self.SB_phi_rep.fix()
+                self.SB_B1 = Param(
+                    initialize=-0.533,
+                    units=None,
+                    doc="Coefficient that relates theta with beta B1 [-]",
+                )
+                self.SB_A1 = Param(
+                    initialize=0.533,
+                    units=None,
+                    doc="Coefficient that relates phi with beta A1 [-]",
+                )
+
+                @self.Expression()
+                def SB_gamma(_):
+                    return self.SB_theta_rep + self.SB_A1 * self.SB_phi_rep
+
+                @self.Expression()
+                def SB_beta(_):
+                    return self.SB_B1 * self.SB_theta_rep + self.SB_phi_rep
+
+                # self.SB_gamma_ref = Param(
+                #     initialize=1,
+                #     units=pyunits.kg / pyunits.mol,
+                #     doc="Reference value for Stampi-Bombelli model parameter gamma [kg/mol]",
+                # )
+                # self.SB_beta_ref = Param(
+                #     initialize=1,
+                #     units=pyunits.kg / pyunits.mol,
+                #     doc="Reference value for Stampi-Bombelli model parameter beta [kg/mol]",
+                # )
+                # self.SB_gamma_rep = Var(
+                #     initialize=-0.137 / self.SB_gamma_ref,
+                #     units=None,
+                #     bounds=(-200, 200),
+                #     doc="reparameterized Stampi-Bomblli model parameter gamma [kg/mol]",
+                # )
+                # self.SB_gamma_rep.fix()
+                # self.SB_beta_rep = Var(
+                #     initialize=5.612 / self.SB_beta_ref,
+                #     units=None,
+                #     bounds=(-200, 200),
+                #     doc="reparameterized Stampi-Bomblli model parameter beta [kg/mol]",
+                # )
+                # self.SB_beta_rep.fix()
             else:
                 self.SB_B1 = Param(
                     initialize=-0.533,
                     units=None,
                     doc="Coefficient that relates theta with beta B1 [-]",
                 )
-                self.SB_theta = Var(
-                    initialize=-0.137,
+                self.SB_theta_scale = Param(
+                    initialize=0.05,
                     units=None,
+                    doc="Scaling of theta value to make SB_theta close to 1 [-]",
+                )
+                self.SB_theta = Var(
+                    initialize=-0.137 / self.SB_theta_scale,
+                    units=pyunits.kg / pyunits.mol,
                     bounds=(-200, 200),
-                    doc="reparameterized Stampi-Bomblli model parameter theta [-]",
+                    doc="reparameterized Stampi-Bomblli model parameter theta [kg/mol]",
                 )
                 self.SB_theta.fix()
+                # self.SB_beta = Expression(expr = self.SB_B1 * self.SB_theta)
 
         # isotherm equations ============================================
         if self.config.coadsorption_isotherm == "Mechanistic":
@@ -1163,15 +1203,15 @@ and used when constructing these
                 if self.config.n_rep_SB_param == 2:
                     a = smooth_max(
                         1e-10,
-                        1
-                        - b.SB_gamma_rep
-                        * self.SB_gamma_ref
-                        * b.adsorbate_loading_equil[t, x, "H2O"],
+                        1 - b.SB_gamma * b.adsorbate_loading_equil[t, x, "H2O"],
                     )
                 else:
                     a = smooth_max(
                         1e-10,
-                        1 - b.SB_theta * b.adsorbate_loading_equil[t, x, "H2O"],
+                        1
+                        - b.SB_theta
+                        * b.SB_theta_scale
+                        * b.adsorbate_loading_equil[t, x, "H2O"],
                     )
                 return ln_q_inf_dry - log(a)
 
@@ -1206,15 +1246,15 @@ and used when constructing these
                     a = smooth_max(
                         1e-10,
                         1
-                        + b.SB_B1 * b.SB_theta * b.adsorbate_loading_equil[t, x, "H2O"],
+                        + b.SB_B1
+                        * b.SB_theta
+                        * b.SB_theta_scale
+                        * b.adsorbate_loading_equil[t, x, "H2O"],
                     )
                 else:
                     a = smooth_max(
                         1e-10,
-                        1
-                        + b.SB_beta_ref
-                        * b.SB_beta_rep
-                        * b.adsorbate_loading_equil[t, x, "H2O"],
+                        1 + b.SB_beta * b.adsorbate_loading_equil[t, x, "H2O"],
                     )
                 pres_smooth_max = smooth_max(1e-10, b.pres[t, x, "CO2"], eps=1e-8)
                 return ln_b_dry + log(a) + log(pres_smooth_max)
