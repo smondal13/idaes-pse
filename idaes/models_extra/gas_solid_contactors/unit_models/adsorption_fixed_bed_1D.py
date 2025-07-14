@@ -319,11 +319,19 @@ dyameter.}""",
         "coadsorption_isotherm",
         ConfigValue(
             default="None",
-            domain=In(["None", "Stampi-Bombelli", "Mechanistic", "WADST"]),
+            domain=In(
+                [
+                    "None",
+                    "Stampi-Bombelli",
+                    "reparam Stampi-Bombelli",
+                    "Mechanistic",
+                    "WADST",
+                ]
+            ),
             description="isoterm form for CO2 and H2O co-adsorption",
             doc="""Construction flag to specify the isotherm formula for co-adsorption.
         Default: None, indicating water has no effect on CO2 uptake.
-        Valid values: "None", "Stampi-Bombelli", "Mechanistic" "WADST".""",
+        Valid values: "None", "Stampi-Bombelli", "reparam Stampi-Bombelli", "Mechanistic" "WADST".""",
         ),
     )
 
@@ -331,13 +339,13 @@ dyameter.}""",
         "mass_transfer_coefficient_type",
         ConfigValue(
             default="Fixed",
-            domain=In(["Fixed", "Macropore", "Arrhenius"]),
+            domain=In(["Fixed", "Macropore", "Arrhenius", "reparam_Arrhenius"]),
             description="type of MTC equation to use",
             doc="""Construction flag for the type of mass transfer coefficient equation 
             to use. "Fixed" is a single fixed value and "Macropore uses an equation relating
             sorbent properties and effective diffusion to the mass transfer coefficient.
             Default: "Fixed".
-            Valid values: "Fixed", "Macropore","Arrhenius".""",
+            Valid values: "Fixed", "Macropore","Arrhenius", "reparam_Arrhenius".""",
         ),
     )
 
@@ -686,6 +694,22 @@ and used when constructing these
                 doc="fixed mass transfer coefficient parameter",
             )
             self.k_fixed.fix()
+        elif self.config.mass_transfer_coefficient_type == "reparam_Arrhenius":
+            self.a_LDF = Var(
+                self.adsorbed_components,
+                initialize=0,
+                units=pyunits.dimensionless,  # for k = 1/s
+                bounds=(None, None),
+                doc="a_LDF for reparam_Arrhenius LDF coefficient",
+            )
+            self.a_LDF.fix()
+            self.E_E0 = Var(
+                self.adsorbed_components,
+                initialize=0.75,
+                units=pyunits.J / pyunits.mol,  # for k = 1/s
+                bounds=(0, 100),
+                doc="E/E0 for reparam_Arrhenius LDF coefficient",
+            )
 
         # =====================================================================
         # Build control volume 1D for gas phase and populate gas control volume
@@ -779,6 +803,11 @@ and used when constructing these
             self.ln_k0_LDF["H2O"] = -3.50656
             self.E_LDF["CO2"] = 38870
             self.E_LDF["H2O"] = 0
+        elif self.config.mass_transfer_coefficient_type == "reparam_Arrhenius":
+            self.a_LDF["CO2"] = -6.05
+            self.a_LDF["H2O"] = -4.1
+            self.E_E0["CO2"] = 0.75
+            self.E_E0["H2O"] = 1e-8
 
         # add isotherm parameters ================================
         self.temperature_ref = Param(
@@ -928,6 +957,24 @@ and used when constructing these
                 doc="Stampi-Bomblli model parameter beta [kg/mol]",
             )
             self.SB_beta.fix()
+        elif self.config.coadsorption_isotherm == "reparam Stampi-Bombelli":
+            self.SB_B1 = Param(
+                initialize=-0.533,
+                units=None,
+                doc="Coefficient that relates theta with beta B1 [-]",
+            )
+            self.SB_theta_scale = Param(
+                initialize=0.05,
+                units=None,
+                doc="Scaling of theta value to make SB_theta close to 1 [-]",
+            )
+            self.SB_theta = Var(
+                initialize=-0.137 / self.SB_theta_scale,
+                units=pyunits.kg / pyunits.mol,
+                bounds=(-200, 200),
+                doc="reparameterized Stampi-Bomblli model parameter theta [kg/mol]",
+            )
+            self.SB_theta.fix()
 
         # isotherm equations ============================================
         if self.config.coadsorption_isotherm == "Mechanistic":
@@ -1067,6 +1114,85 @@ and used when constructing these
                     - log(1 + exp(b.tau[t, x] * b.ln_b_p[t, x]))
                 )
 
+        elif self.config.coadsorption_isotherm == "reparam Stampi-Bombelli":
+            self.ln_qtoth = Var(
+                self.flowsheet().time,
+                self.length_domain,
+                initialize=0,
+                bounds=(None, 3),
+                doc="natural log of qdry for isotherm model",
+                units=None,
+            )
+
+            @self.Expression(
+                self.flowsheet().time,
+                self.length_domain,
+                doc="temperature dependency of q_inf, ln transformed",
+            )
+            def ln_q_inf(b, t, x):
+                T = b.solid_temperature[t, x]
+                ln_q_inf_dry = log(b.q0_inf) + b.X * (1 - b.temperature_ref / T)
+                a = smooth_max(
+                    1e-10,
+                    1
+                    - b.SB_theta
+                    * b.SB_theta_scale
+                    * b.adsorbate_loading_equil[t, x, "H2O"],
+                )
+                return ln_q_inf_dry - log(a)
+
+            @self.Expression(
+                self.flowsheet().time, self.length_domain, doc="tau for toth model"
+            )
+            def tau(b, t, x):
+                T = b.solid_temperature[t, x]
+                return b.tau0 + b.alpha * (1 - b.temperature_ref / T)
+
+            @self.Expression(
+                self.flowsheet().time,
+                self.length_domain,
+                self.adsorbed_components,
+                doc="component partial pressure used in isotherm equations",
+            )
+            def pres(b, t, x, j):
+                return (
+                    b.gas_phase.properties[t, x].pressure
+                    * b.mole_frac_comp_surface[t, x, j]
+                )
+
+            @self.Expression(
+                self.flowsheet().time,
+                self.length_domain,
+                doc="term in log transformed SB isotherm equation, ln(b*p)",
+            )
+            def ln_b_p(b, t, x):
+                T = b.solid_temperature[t, x]
+                ln_b_dry = log(b.b0) + (-b.hoa / constants.gas_constant / T)
+                a = smooth_max(
+                    1e-10,
+                    1
+                    + b.SB_B1
+                    * b.SB_theta
+                    * b.SB_theta_scale
+                    * b.adsorbate_loading_equil[t, x, "H2O"],
+                )
+                pres_smooth_max = smooth_max(
+                    1e-10, b.partial_pres_comp[t, x, "CO2"], eps=1e-8
+                )
+                return ln_b_dry + log(a) + log(pres_smooth_max)
+
+            @self.Constraint(
+                self.flowsheet().time,
+                self.length_domain,
+                doc="""constraint for log transformed mechanistic isotherm model""",
+            )
+            def ln_qtoth_eq(b, t, x):
+                return 10 * (b.tau[t, x] * b.ln_qtoth[t, x]) == 10 * (
+                    b.tau[t, x] * b.ln_q_inf[t, x]
+                    + b.tau[t, x] * b.ln_b_p[t, x]
+                    - log(1 + exp(b.tau[t, x] * b.ln_b_p[t, x]))
+                )
+
         @self.Constraint(
             self.flowsheet().time,
             self.length_domain,
@@ -1121,7 +1247,10 @@ and used when constructing these
                             == (1 - exp(-b.WADST_A / q_h2o)) * q_dry
                             + exp(-b.WADST_A / q_h2o) * q_wet
                         )
-                    elif b.config.coadsorption_isotherm == "Stampi-Bombelli":
+                    elif b.config.coadsorption_isotherm in [
+                        "Stampi-Bombelli",
+                        "reparam Stampi-Bombelli",
+                    ]:
                         return (
                             10
                             * b.adsorbate_loading_equil[t, x, j]
@@ -1610,6 +1739,25 @@ and used when constructing these
             def kf(b, t, x, j):
                 T = b.solid_temperature[t, x]
                 return exp(b.ln_k0_LDF[j] - b.E_LDF[j] / T / constants.gas_constant)
+
+        elif self.config.mass_transfer_coefficient_type == "reparam_Arrhenius":
+
+            @self.Constraint(
+                self.flowsheet().time,
+                self.length_domain,
+                self.adsorbed_components,
+                doc="""Constraint for calculating internal mass transfer coefficient""",
+            )
+            def kf_eqn(b, t, x, j):
+                T_max = 40 + 273.15  # K
+                T_min = 25 + 273.15  # K
+
+                E0 = constants.gas_constant * (T_max * T_min) / (T_max - T_min)  # J/mol
+                X0 = E0 / (2 * constants.gas_constant) * (1 / T_max + 1 / T_min)
+                # dimesnsionless
+                T = b.solid_temperature[t, x]
+                X = E0 / constants.gas_constant / T
+                return b.kf[t, x, j] == exp(b.a_LDF[j] - b.E_E0[j] * (X - X0))
 
         else:
             raise BurntToast(
