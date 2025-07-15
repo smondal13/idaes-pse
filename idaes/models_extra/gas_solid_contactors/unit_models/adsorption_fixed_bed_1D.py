@@ -697,7 +697,7 @@ and used when constructing these
         elif self.config.mass_transfer_coefficient_type == "reparam_Arrhenius":
             self.a_LDF = Var(
                 self.adsorbed_components,
-                initialize=0,
+                initialize=1e-8,
                 units=pyunits.dimensionless,  # for k = 1/s
                 bounds=(None, None),
                 doc="a_LDF for reparam_Arrhenius LDF coefficient",
@@ -707,7 +707,7 @@ and used when constructing these
                 self.adsorbed_components,
                 initialize=0.75,
                 units=pyunits.J / pyunits.mol,  # for k = 1/s
-                bounds=(0, 100),
+                bounds=(0, 3.87),
                 doc="E/E0 for reparam_Arrhenius LDF coefficient",
             )
 
