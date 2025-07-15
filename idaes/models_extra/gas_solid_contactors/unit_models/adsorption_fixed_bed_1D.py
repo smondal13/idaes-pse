@@ -1154,7 +1154,7 @@ and used when constructing these
                 self.adsorbed_components,
                 doc="component partial pressure used in isotherm equations",
             )
-            def pres(b, t, x, j):
+            def partial_pres_comp(b, t, x, j):
                 return (
                     b.gas_phase.properties[t, x].pressure
                     * b.mole_frac_comp_surface[t, x, j]
