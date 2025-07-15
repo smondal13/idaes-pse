@@ -805,7 +805,7 @@ and used when constructing these
             self.E_LDF["H2O"] = 0
         elif self.config.mass_transfer_coefficient_type == "reparam_Arrhenius":
             self.a_LDF["CO2"] = -6.05
-            self.a_LDF["H2O"] = -4.1
+            self.a_LDF["H2O"] = -3.50656  # -4.1
             self.E_E0["CO2"] = 0.75
             self.E_E0["H2O"] = 1e-8
 
@@ -1742,13 +1742,13 @@ and used when constructing these
 
         elif self.config.mass_transfer_coefficient_type == "reparam_Arrhenius":
 
-            @self.Constraint(
+            @self.Expression(
                 self.flowsheet().time,
                 self.length_domain,
                 self.adsorbed_components,
                 doc="""Constraint for calculating internal mass transfer coefficient""",
             )
-            def kf_eqn(b, t, x, j):
+            def kf(b, t, x, j):
                 T_max = 40 + 273.15  # K
                 T_min = 25 + 273.15  # K
 
@@ -1757,7 +1757,7 @@ and used when constructing these
                 # dimesnsionless
                 T = b.solid_temperature[t, x]
                 X = E0 / constants.gas_constant / T
-                return b.kf[t, x, j] == exp(b.a_LDF[j] - b.E_E0[j] * (X - X0))
+                return exp(b.a_LDF[j] - b.E_E0[j] * (X - X0))
 
         else:
             raise BurntToast(
