@@ -2175,7 +2175,7 @@ and used when constructing these
             self.length_domain,
             doc="Heat transfer rate from fluid to wall per bed length",
         )
-        def fluid_to_wall_heat_transfer(b, t, x):
+        def heat_fluid_to_wall(b, t, x):
             return (
                 constants.pi
                 * b.wall_diameter
