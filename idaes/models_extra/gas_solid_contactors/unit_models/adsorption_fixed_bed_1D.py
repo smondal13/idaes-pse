@@ -710,6 +710,7 @@ and used when constructing these
                 bounds=(0, 3.87),
                 doc="E/E0 for reparam_Arrhenius LDF coefficient",
             )
+            self.E_E0.fix()
 
         # =====================================================================
         # Build control volume 1D for gas phase and populate gas control volume
