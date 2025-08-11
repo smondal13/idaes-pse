@@ -106,6 +106,9 @@ from idaes.core.util.dyn_utils import deactivate_model_at
 
 __author__ = "Chinedu Okoli, Anca Ostace, Jinliang Ma, Ryan Hughes"
 
+# Set a small value to avoid division by zero errors
+_SMALL_DIV0_NUM = 1e-12
+
 # Set up logger
 _log = idaeslog.getLogger(__name__)
 
@@ -1217,7 +1220,7 @@ and used when constructing these
                     b_p = b_ * b.partial_pres_comp[t, x, j]
                     tau = b.tau0 + b.alpha * (1 - b.temperature_ref / T)
                     return b.adsorbate_loading_equil[t, x, j] == b.q0_inf * b_p / (
-                        1 + b_p**tau
+                        1 + b_p**tau + _SMALL_DIV0_NUM
                     ) ** (1 / tau)
                 else:  # consider co-adsorption effect, need water loading
                     if b.config.coadsorption_isotherm == "Mechanistic":
@@ -1672,7 +1675,7 @@ and used when constructing these
             return b.RH[t, x] == (
                 b.gas_phase.properties[t, x].mole_frac_comp["H2O"]
                 * b.gas_phase.properties[t, x].pressure
-                / p_vap
+                / (p_vap + _SMALL_DIV0_NUM)
             )
 
         # add isotherm equations/constraints
